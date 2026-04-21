@@ -2,115 +2,120 @@
 /**
  * Auto-generated bootstrap script
  * Runs once after git clone to setup project correctly
- * This file will self-delete after successful execution
  */
 
-const fs = require('fs');
-const { execSync } = require('child_process');
+const fs = require("fs");
 
-// ✅ CHANGED: now uses CLI arg instead of hardcoded name
-const PROJECT_NAME = process.argv[2];
+const BOOTSTRAP_MARKER = ".bootstrap-complete";
+const PROVIDED_WORKER_NAME = process.argv[2];
 
-if (!PROJECT_NAME) {
-    console.error('❌ Missing required argument: providedWorkerName');
-    console.log('Usage: bun bootstrap.js <providedWorkerName>');
-    process.exit(1);
-}
-
-const BOOTSTRAP_MARKER = '.bootstrap-complete';
-
-// Check if already bootstrapped
 if (fs.existsSync(BOOTSTRAP_MARKER)) {
-    console.log('✓ Bootstrap already completed');
-    process.exit(0);
+  console.log("✓ Bootstrap already completed");
+  process.exit(0);
 }
 
-console.log('🚀 Running first-time project setup...\n');
+console.log("🚀 Running first-time project setup...\n");
 
 try {
-    // Update package.json
-    updatePackageJson();
-    
-    // Update wrangler.jsonc if exists
-    updateWranglerJsonc();
-    
-    // Run setup commands
-    runSetupCommands();
-    
-    // Mark as complete
-    fs.writeFileSync(BOOTSTRAP_MARKER, new Date().toISOString());
-    
-    // Self-delete
-    fs.unlinkSync(__filename);
-    
-    console.log('\n✅ Bootstrap complete! Project ready.');
+  const packageJson = readJson("package.json");
+  const wranglerConfig = fs.existsSync("wrangler.jsonc")
+    ? readJsonc("wrangler.jsonc")
+    : null;
+
+  const projectName =
+    PROVIDED_WORKER_NAME ||
+    (wranglerConfig && typeof wranglerConfig.name === "string" ? wranglerConfig.name : "") ||
+    (packageJson && typeof packageJson.name === "string" ? packageJson.name : "") ||
+    null;
+
+  if (!projectName) {
+    throw new Error(
+      "Could not determine project name from CLI arg, wrangler.jsonc, or package.json"
+    );
+  }
+
+  updatePackageJson(projectName, packageJson);
+  updateWranglerJsonc(projectName, wranglerConfig);
+  runSetupCommands();
+
+  fs.writeFileSync(BOOTSTRAP_MARKER, new Date().toISOString() + "\n");
+
+  console.log("\n✅ Bootstrap complete! Project ready.");
 } catch (error) {
-    console.error('❌ Bootstrap failed:', error.message);
-    console.log('You may need to manually update package.json and wrangler.jsonc');
-    process.exit(1);
+  console.error("❌ Bootstrap failed:", error.message);
+  console.log("You may need to manually update package.json and wrangler.jsonc");
+  process.exit(1);
 }
 
-function updatePackageJson() {
-    try {
-        const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-        pkg.name = PROJECT_NAME;
-        
-        // Remove prepare script after bootstrap
-        if (pkg.scripts && pkg.scripts.prepare) {
-            delete pkg.scripts.prepare;
-        }
-        
-        fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-        console.log('✓ Updated package.json with project name: ' + PROJECT_NAME);
-    } catch (error) {
-        console.error('Failed to update package.json:', error.message);
-        throw error;
-    }
+function readJson(path) {
+  return JSON.parse(fs.readFileSync(path, "utf8"));
 }
 
-function updateWranglerJsonc() {
-    if (!fs.existsSync('wrangler.jsonc')) {
-        console.log('⊘ wrangler.jsonc not found, skipping');
-        return;
-    }
-    
-    try {
-        let content = fs.readFileSync('wrangler.jsonc', 'utf8');
-        content = content.replace(/"name"\s*:\s*"[^"]*"/, `"name": "${PROJECT_NAME}"`);
-        fs.writeFileSync('wrangler.jsonc', content);
-        console.log('✓ Updated wrangler.jsonc with project name: ' + PROJECT_NAME);
-    } catch (error) {
-        console.warn('⚠️  Failed to update wrangler.jsonc:', error.message);
-    }
+function stripJsoncComments(content) {
+  return content
+    .replace(/^\uFEFF/, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+}
+
+function readJsonc(path) {
+  const raw = fs.readFileSync(path, "utf8");
+  return JSON.parse(stripJsoncComments(raw));
+}
+
+function writeJson(path, data) {
+  fs.writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
+}
+
+function updatePackageJson(projectName, pkg) {
+  pkg.name = projectName;
+
+  if (pkg.scripts && pkg.scripts.prepare) {
+    delete pkg.scripts.prepare;
+  }
+
+  writeJson("package.json", pkg);
+  console.log("✓ Updated package.json with project name: " + projectName);
+}
+
+function updateWranglerJsonc(projectName, wranglerConfig) {
+  if (!wranglerConfig) {
+    console.log("⊘ wrangler.jsonc not found, skipping");
+    return;
+  }
+
+  wranglerConfig.name = projectName;
+  writeJson("wrangler.jsonc", wranglerConfig);
+  console.log("✓ Updated wrangler.jsonc with project name: " + projectName);
 }
 
 function runSetupCommands() {
-    const commands = [];
-    
-    if (commands.length === 0) {
-        console.log('⊘ No setup commands to run');
-        return;
+  const commands = [];
+
+  if (commands.length === 0) {
+    console.log("⊘ No setup commands to run");
+    return;
+  }
+
+  console.log("\n📦 Running setup commands...\n");
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const cmd of commands) {
+    console.log(`▸ ${cmd}`);
+    try {
+      require("child_process").execSync(cmd, {
+        stdio: "inherit",
+        cwd: process.cwd(),
+      });
+      successCount++;
+    } catch (error) {
+      failCount++;
+      console.warn(`⚠️  Command failed: ${cmd}`);
+      console.warn(`   Error: ${error.message}`);
     }
-    
-    console.log('\n📦 Running setup commands...\n');
-    
-    let successCount = 0;
-    let failCount = 0;
-    
-    for (const cmd of commands) {
-        console.log(`▸ ${cmd}`);
-        try {
-            execSync(cmd, { 
-                stdio: 'inherit',
-                cwd: process.cwd()
-            });
-            successCount++;
-        } catch (error) {
-            failCount++;
-            console.warn(`⚠️  Command failed: ${cmd}`);
-            console.warn(`   Error: ${error.message}`);
-        }
-    }
-    
-    console.log(`\n✓ Commands completed: ${successCount} successful, ${failCount} failed\n`);
+  }
+
+  console.log(`\n✓ Commands completed: ${successCount} successful, ${failCount} failed\n`);
 }
